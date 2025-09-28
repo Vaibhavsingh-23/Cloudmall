@@ -1,14 +1,14 @@
 package ecommerce.Cloudmall.service;
 
-import ecommerce.Cloudmall.model.Order;
-import ecommerce.Cloudmall.model.OrderItem;
-import ecommerce.Cloudmall.model.Cart;
-import ecommerce.Cloudmall.repository.OrderRepository;
+import ecommerce.Cloudmall.model.*;
 import ecommerce.Cloudmall.repository.CartRepository;
+import ecommerce.Cloudmall.repository.OrderRepository;
+import ecommerce.Cloudmall.repository.ProductRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -20,24 +20,44 @@ public class OrderService {
     @Autowired
     private CartRepository cartRepository;
 
+    @Autowired
+    private ProductRepository productRepository; // ✅ Added
+
     public Order placeOrder(String userId) {
         Cart cart = cartRepository.findByUserId(userId).orElseThrow();
 
-        double totalPrice = cart.getItems()
-                .stream()
-                .mapToDouble(item -> item.getQuantity() * 100.0) // dummy price logic (replace later)
-                .sum();
+        double totalPrice = 0.0;
+        List<OrderItem> orderItems = new ArrayList<>();
+
+        for (CartItem cartItem : cart.getItems()) {
+            Product product = productRepository.findById(cartItem.getProductId())
+                    .orElseThrow(() -> new RuntimeException("Product not found: " + cartItem.getProductId()));
+
+            // check stock
+            if (product.getStock() < cartItem.getQuantity()) {
+                throw new RuntimeException("Not enough stock for product: " + product.getName());
+            }
+
+            // reduce stock
+            product.setStock(product.getStock() - cartItem.getQuantity());
+            productRepository.save(product);
+
+            double itemPrice = product.getPrice() * cartItem.getQuantity();
+            totalPrice += itemPrice;
+
+            // save unit price for order
+            orderItems.add(new OrderItem(product.getId(), cartItem.getQuantity(), product.getPrice()));
+        }
 
         Order order = new Order();
         order.setUserId(userId);
-        order.setItems(cart.getItems().stream()
-                .map(item -> new OrderItem(item.getProductId(), item.getQuantity(), 100.0)) // dummy price
-                .toList());
+        order.setItems(orderItems);
         order.setTotalPrice(totalPrice);
         order.setStatus("PLACED");
         order.setCreatedAt(LocalDateTime.now());
 
-        cart.getItems().clear(); // empty cart after placing order
+        // clear cart after placing order
+        cart.getItems().clear();
         cartRepository.save(cart);
 
         return orderRepository.save(order);
